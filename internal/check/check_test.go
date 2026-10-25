@@ -159,6 +159,30 @@ func TestCheckRDAP(t *testing.T) {
 	}
 }
 
+// A registry that rejects a burst without Retry-After must still resolve every
+// domain once requests are paced.
+func TestCheckRDAPThrottledBurst(t *testing.T) {
+	var calls int32
+	c := newRDAPChecker(t, func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) <= 6 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	c.Timeout = time.Second // must not count time spent queued behind the gate
+
+	domains := []string{"a.com", "b.com", "c.com", "d.com", "e.com", "f.com"}
+	for _, r := range c.CheckAll(context.Background(), domains, 6) {
+		if r.Status != StatusAvailable {
+			t.Errorf("%s = %+v, want available", r.Domain, r)
+		}
+	}
+	if g := c.gates.get(c.Bootstrap.services["com"]); g.interval != throttleStart {
+		t.Errorf("interval = %v; one burst should not escalate past %v", g.interval, throttleStart)
+	}
+}
+
 func TestClassifyWhois(t *testing.T) {
 	disclaimer := strings.Repeat("Terms of use apply to this record.\n", whoisHeadLines) +
 		"Queries are not found to be abusive unless too many are sent.\n"

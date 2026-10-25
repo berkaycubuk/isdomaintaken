@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,12 @@ still show as available but cost more, or not be purchasable at all.`,
 			}
 
 			c := &check.Checker{HTTP: client, Bootstrap: boot, Whois: newWhois(timeout), Timeout: timeout}
+			c.OnThrottle = func(server string, every time.Duration) {
+				if u, err := url.Parse(server); err == nil {
+					server = u.Host
+				}
+				log.Info("%s is rate-limiting; slowing to one request every %s", server, every)
+			}
 			log.Debug("checking %d domain(s), concurrency %d", len(domains), concurrency)
 			results := c.CheckAll(ctx, domains, concurrency)
 

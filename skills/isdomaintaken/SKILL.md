@@ -91,7 +91,9 @@ stdout is a JSON array. stderr carries only warnings and errors.
 printf '%s\n' lumen ferro quilt tandem | isdomaintaken -t com,dev,io,app -a -o json
 ```
 
-**`unknown` results.** These are usually rate limits or timeouts. Retry just those domains once with `-c 2`. If they still fail, report them as unknown rather than guessing.
+**Rate limits.** The tool handles these itself. When a registry returns HTTP 429, it spaces out requests to that registry and retries, printing `... is rate-limiting; slowing to ...` on stderr. Google Registry (`.dev`, `.app`, `.page`, …) limits hardest: dozens of names on those TLDs can take a minute or two. Let the command finish instead of killing it, and don't run several batches in parallel. Use a long enough command timeout (e.g. 5 minutes for 100+ lookups).
+
+**`unknown` results.** Whatever is left after the built-in retries. Retry just those domains once. If they still fail, report them as unknown rather than guessing.
 
 ## Caveats to tell the user
 

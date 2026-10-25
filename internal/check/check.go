@@ -41,17 +41,23 @@ type Checker struct {
 	Bootstrap *Bootstrap
 	Whois     *Whois
 	Timeout   time.Duration
+
+	// OnThrottle, if set, is called when a rate-limiting server forces
+	// requests to it to be spaced out further.
+	OnThrottle func(server string, every time.Duration)
+
+	gates gates
 }
 
 // Check looks up a single normalized domain.
 func (c *Checker) Check(ctx context.Context, domain string) Result {
+	if base, ok := c.Bootstrap.Lookup(domain); ok {
+		return c.checkRDAP(ctx, base, domain)
+	}
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
-	}
-	if base, ok := c.Bootstrap.Lookup(domain); ok {
-		return c.checkRDAP(ctx, base, domain)
 	}
 	return c.Whois.Check(ctx, domain)
 }

@@ -34,7 +34,9 @@ xq7zv9kpl2wm.dev  available  -           -
 
 **Caveats:** "available" means *not registered*. Premium and registry-reserved names may
 show as available but cost more or can't be bought. WHOIS verdicts are parsed from free-form text
-and are best-effort. The RDAP bootstrap file is cached for 24h in the user cache dir.
+and are best-effort. When a registry rate-limits (HTTP 429), requests to it are spaced out and retried
+automatically, so large batches on strict registries like Google's (`.dev`, `.app`) are slow but complete.
+The RDAP bootstrap file is cached for 24h in the user cache dir.
 
 ## Use with AI agents
 

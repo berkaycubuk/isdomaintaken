@@ -24,26 +24,29 @@ type rdapEntity struct {
 	Entities   []rdapEntity  `json:"entities"`
 }
 
-const rdapAttempts = 3
+const rdapAttempts = 6
 
 // checkRDAP queries base for domain. 200 means registered, 404 means not.
+// Rate-limited servers are retried, pacing all requests to the same base.
 func (c *Checker) checkRDAP(ctx context.Context, base, domain string) Result {
 	res := Result{Domain: domain, Source: "rdap"}
 	url := base + "domain/" + domain
+	gate := c.gates.get(base)
+	retriedNet := false
 
 	for attempt := 1; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
+		if err := gate.wait(ctx); err != nil {
 			return res.fail(err)
 		}
-		req.Header.Set("Accept", "application/rdap+json, application/json")
-		resp, err := c.HTTP.Do(req)
+		resp, body, err := c.getRDAP(ctx, url)
 		if err != nil {
-			return res.fail(err)
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if err != nil {
+			// Timeouts and resets are often transient; retry those once.
+			if !retriedNet && ctx.Err() == nil {
+				retriedNet = true
+				if sleep(ctx, time.Second) == nil {
+					continue
+				}
+			}
 			return res.fail(err)
 		}
 
@@ -56,13 +59,38 @@ func (c *Checker) checkRDAP(ctx context.Context, base, domain string) Result {
 			res.Status = StatusAvailable
 			return res
 		case resp.StatusCode == http.StatusTooManyRequests && attempt < rdapAttempts:
-			if err := sleep(ctx, retryAfter(resp, attempt)); err != nil {
-				return res.fail(err)
+			if every, slowed := gate.throttled(retryAfter(resp)); slowed && c.OnThrottle != nil {
+				c.OnThrottle(base, every)
 			}
 		default:
 			return res.fail(fmt.Errorf("rdap: HTTP %d from %s", resp.StatusCode, base))
 		}
 	}
+}
+
+// getRDAP performs one request. The timeout covers only the request itself,
+// not time spent queued behind a throttled host.
+func (c *Checker) getRDAP(ctx context.Context, url string) (*http.Response, []byte, error) {
+	if c.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", "application/rdap+json, application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp, body, nil
 }
 
 func fillRDAPDetails(res *Result, body []byte) {
@@ -125,11 +153,12 @@ func dateOnly(s string) string {
 	return s
 }
 
-func retryAfter(resp *http.Response, attempt int) time.Duration {
+// retryAfter returns the server's requested delay, or 0 when it gave none.
+func retryAfter(resp *http.Response) time.Duration {
 	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 && s <= 30 {
 		return time.Duration(s) * time.Second
 	}
-	return time.Duration(attempt) * time.Second
+	return 0
 }
 
 func sleep(ctx context.Context, d time.Duration) error {
