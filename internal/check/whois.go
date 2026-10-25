@@ -129,6 +129,12 @@ func (w *Whois) Check(ctx context.Context, domain string) Result {
 	}
 	resp, err := w.query(ctx, server, domain)
 	if err != nil {
+		// Some registries reset connections under bursts; one retry is usually enough.
+		if sleep(ctx, time.Second) == nil {
+			resp, err = w.query(ctx, server, domain)
+		}
+	}
+	if err != nil {
 		return res.fail(fmt.Errorf("whois %s: %w", server, err))
 	}
 	res.Status, err = classifyWhois(resp)
